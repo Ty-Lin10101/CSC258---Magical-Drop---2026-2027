@@ -1,0 +1,8 @@
+# Force GitHub to detect MIPS assembly files as Assembly
+*.asm linguist-language=Assembly
+*.s linguist-language=Assembly
+
+# Normalize line endings across Windows, macOS, and WebSaturn
+* text=auto
+*.asm text eol=lf
+*.s text eol=lf
