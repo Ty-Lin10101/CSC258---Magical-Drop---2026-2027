@@ -1,0 +1,24 @@
+Starting page 18 on the handout, under easy features:
+
+1) When the player has reached the “game over” condition, display a Game Over screen in pixels
+on the screen. Restart the game if a “retry” option is chosen by the player. Retry should start a
+brand new game (no state is retained from previous attempts)
+    - note: I have a game over thing implemented that just paints the whole screen white and waits for the player to press 'q' to quit the game.
+
+2)  If the player presses the keyboard key p, display a “Paused” message on screen until they press
+p a second time, at which point the original game will resume.
+
+3)  Implement row advancement with a timer, so that new rows of bubbles periodically push down
+from the top automatically.
+    - note: I currently have it so that a row is created every 15 keystrokes, but it shouldn't require too much refactoring.
+ 
+4) If doing 3), then this would be nice to do as well: Allow the player to select Easy, Medium or Hard mode before the game, and adjust the game
+speed (row advancement rate) based on their choice.
+
+Under hard features:
+5) Create menu screens for things like difficulty selection, speed, a score board of high scores, etc
+(assumes you have completed at least one of those hard features).
+    - probably the start up menu, then difficulty selection if we do that
+
+Some thing(s) that I kinda want in particular:
+- a keybind for adding a row to make it so that rows come in quicker (just for testing/debugging)
