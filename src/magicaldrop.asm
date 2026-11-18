@@ -68,6 +68,8 @@ MAX_HOLD: .word 6
 
 KEYSTROKE_COUNT: .word 0
 
+FRAME_COUNT: .word 0 #one pass of the the game loop = 1 frame. Framce count = how many passes so far 
+
 ##############################################################################
 # Code
 ##############################################################################
@@ -192,6 +194,17 @@ execute_action:
   j sleep
 
 sleep:
+   # Timer in here since sleep always runs, count frames in sleep 
+   lw $t0, FRAME_COUNT
+   addi $t0, $t0, 1
+   sw $t0, FRAME_COUNT
+   
+   blt $t0, 60, timer_done #300, 300 * 16ms = 4800ms which would be approx 5000 ms,accounting for slight delays 
+   sw $zero, FRAME_COUNT
+   jal add_bubble_row
+   
+ timer_done: #timer section done, we don't add a bubble row unless its been 5 seconds 
+   
    # Re-paint the screen 
   jal draw_grid
   jal draw_character
