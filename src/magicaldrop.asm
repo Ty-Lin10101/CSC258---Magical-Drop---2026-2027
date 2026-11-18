@@ -2,7 +2,7 @@
 # This file contains our implementation of Magical Drop.
 #
 # Student 1: Tyler Christopher Lin, 1011890296
-# Student 2: Brandon Zento Li, STUDENT NUMBER HERE <---------------------------------------------------------------
+# Student 2: Brandon Zento Li, 1011974035 
 #
 # We assert that the code submitted here is entirely our own 
 # creation, and will indicate otherwise when it is not.
@@ -32,8 +32,8 @@ game_grid: .space 560  # got .space from https://jsevy.com/architecture/MIPSRef
 GRAVITY_FLAGS: .space 560  # 1 byte per cell (0 = didn't move, 1 = moved by gravity)
 
 # Boundary box offset -- top-left corner
-START_X: .word 4
-START_Y: .word 4
+START_X: .word 4 # starts 4 pixels from left of screen
+START_Y: .word 4 # 4 pixels from top 
 .eqv COLS 7
 .eqv VISIBLE_ROWS 14
 .eqv TOTAL_ROWS 20
@@ -102,6 +102,7 @@ KEYSTROKE_COUNT: .word 0
 
 # %dst = display address of unit (%row, %col): base + 4 * (row * width + col)
 # %dst may equal %row, but must differ from %col, %width and %base
+#
 .macro SCREEN_ADDR(%dst, %row, %col, %width, %base)
     mul %dst, %row, %width
     add %dst, %dst, %col
@@ -148,6 +149,8 @@ game_loop:
   beq $t2, 0x64, is_valid_key  # if ASCII = 'd', move player with parameter $a0 = 1 (move right)
   beq $t2, 0x73, is_valid_key  # if ASCII = 's', grab bubble
   beq $t2, 0x77, is_valid_key  # if ASCII = 'w', check if can throw anything
+  
+  beq $t2, 0x70, pause         # if ASCII = 'p', quit game
   
   beq $t2, 0x71, quit         # if ASCII = 'q', quit game
   j sleep
@@ -198,6 +201,21 @@ sleep:
   li $a0, 16                    # ~16 ms  ---> now 250ms = 0.25s,  CHANGE THIS LATER
   syscall
   j game_loop
+
+pause:
+   #pause message later
+pause_loop:
+    li $v0, 32
+    li $a0, 16
+    syscall
+    lw $t0, ADDR_KBRD # remember, t0 just stores where the address is 
+    lw $t1, 0($t0) #at the address, it says whether it was pressed or not. 4 bytes over, is the key pressed if 1. 
+    beqz $t1, pause_loop #if no key was pressed, stay paused 
+    lw $t2, 4($t0)  
+    beq $t2, 0x70, sleep #resume: back to repainting the screen and game loop
+    j pause_loop
+    
+    
 
 # Exit program gracefully when done
 quit:
