@@ -199,7 +199,7 @@ sleep:
    addi $t0, $t0, 1
    sw $t0, FRAME_COUNT
    
-   blt $t0, 60, timer_done #300, 300 * 16ms = 4800ms which would be approx 5000 ms,accounting for slight delays 
+   blt $t0, 300, timer_done #300, 300 * 16ms = 4800ms which would be approx 5000 ms,accounting for slight delays 
    sw $zero, FRAME_COUNT
    jal add_bubble_row
    
