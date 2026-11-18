@@ -2,7 +2,7 @@
 # This file contains our implementation of Magical Drop.
 #
 # Student 1: Tyler Christopher Lin, 1011890296
-# Student 2: Brandon Zento Li, STUDENT NUMBER HERE <---------------------------------------------------------------
+# Student 2: Brandon Zento Li, 1011974035 
 #
 # We assert that the code submitted here is entirely our own 
 # creation, and will indicate otherwise when it is not.
@@ -32,8 +32,8 @@ game_grid: .space 560  # got .space from https://jsevy.com/architecture/MIPSRef
 GRAVITY_FLAGS: .space 560  # 1 byte per cell (0 = didn't move, 1 = moved by gravity)
 
 # Boundary box offset -- top-left corner
-START_X: .word 4
-START_Y: .word 4
+START_X: .word 4 # starts 4 pixels from left of screen
+START_Y: .word 4 # 4 pixels from top 
 .eqv COLS 7
 .eqv VISIBLE_ROWS 14
 .eqv TOTAL_ROWS 20
@@ -102,6 +102,7 @@ KEYSTROKE_COUNT: .word 0
 
 # %dst = display address of unit (%row, %col): base + 4 * (row * width + col)
 # %dst may equal %row, but must differ from %col, %width and %base
+#
 .macro SCREEN_ADDR(%dst, %row, %col, %width, %base)
     mul %dst, %row, %width
     add %dst, %dst, %col
@@ -148,6 +149,8 @@ game_loop:
   beq $t2, 0x64, is_valid_key  # if ASCII = 'd', move player with parameter $a0 = 1 (move right)
   beq $t2, 0x73, is_valid_key  # if ASCII = 's', grab bubble
   beq $t2, 0x77, is_valid_key  # if ASCII = 'w', check if can throw anything
+  
+  beq $t2, 0x70, pause         # if ASCII = 'p', quit game
   
   beq $t2, 0x71, quit         # if ASCII = 'q', quit game
   j sleep
@@ -198,6 +201,33 @@ sleep:
   li $a0, 16                    # ~16 ms  ---> now 250ms = 0.25s,  CHANGE THIS LATER
   syscall
   j game_loop
+
+pause:
+  lw $a0, COLOR_WHITE
+  jal draw_pause_bars
+  
+pause_loop:
+  li $v0, 32
+  li $a0, 16
+  syscall
+  
+  lw $t0, ADDR_KBRD # remember, t0 just stores where the address is 
+  lw $t1, 0($t0) #flag at the keyboard address: 1 = a key was pressed   
+  
+  beqz $t1, pause_loop #if no key was pressed, stay paused 
+  
+  lw $t2, 4($t0)  
+  
+  beq $t2, 0x70, resume #resume: back to repainting the screen and game loop
+  
+  j pause_loop
+  
+resume: 
+  lw $a0, COLOR_BLACK 
+  jal draw_pause_bars #erase the pause bars 
+  j sleep 
+    
+    
 
 # Exit program gracefully when done
 quit:
@@ -550,7 +580,42 @@ draw_grid_next_row:
 
 draw_grid_done:
   jr $ra
+  
+  
+# --------------------------------------------------------------------------------------------------- PAUSE BARS
+#drawing the pause bars from (8, 18) to (15, 23) 
+draw_pause_bars:
+  lw $t0, ADDR_DSPL
+  lw $t1, DISPLAY_WIDTH
+  li $t2, 8 # row counter
+pause_bars_row:
+  bge $t2, 16, pause_bars_done
+  
+  li $t3, 18 #col counter
 
+pause_bars_col:
+  bge $t3, 24, pause_bars_next_row 
+  beq $t3, 20, pause_bars_next_col 
+  beq $t3, 21, pause_bars_next_col
+  
+  
+  # (%dst, %row, %col, %width, %base)
+  SCREEN_ADDR($t9, $t2, $t3, $t1, $t0)
+  sw $a0, 0($t9) 
+  
+pause_bars_next_col:
+  addi $t3, $t3, 1 #next col 
+  j pause_bars_col 
+  
+pause_bars_next_row: 
+  addi $t2, $t2, 1 # next row   
+  j pause_bars_row 
+  
+
+pause_bars_done:
+  jr $ra 
+
+  
 
 # --------------------------------------------------------------------------------------------------- PLAYER CONTROLS
 
