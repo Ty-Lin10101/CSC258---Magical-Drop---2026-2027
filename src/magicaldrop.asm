@@ -30,6 +30,8 @@ DISPLAY_WIDTH:
 # We allocate space for additional rows to account for overflow when throwing bubbles.
 game_grid: .space 560  # got .space from https://jsevy.com/architecture/MIPSRef
 GRAVITY_FLAGS: .space 560  # 1 byte per cell (0 = didn't move, 1 = moved by gravity)
+PENDING_GRID: .space 560 # Kind of like gravity flagging, but this time we're checking for pending matches
+MATCH_FLASH_DELAY: .word 200
 
 # Boundary box offset -- top-left corner
 START_X: .word 4 # starts 4 pixels from left of screen
@@ -47,6 +49,7 @@ PLAYER_OFFSET_Y: .word 16
 COLOR_BLACK:    .word 0x000000     # Background color
 COLOR_GRAY:     .word 0x808080     # Border color
 COLOR_DARK_GRAY: .word 0x444444    # Player throw trace color
+COLOR_LIGHT_GRAY: .word 0xCCCCCC   # Pending matches
 COLOR_WHITE:    .word 0xffffff 
 COLOR_RED:      .word 0xff0000
 COLOR_GREEN:    .word 0x00ff00
@@ -778,6 +781,14 @@ throw_place_loop:
   CELL_ADDR($t2, $t1, $t6, $t7)
   sw   $t5, 0($t2)          # Place bubble
 
+  # flag this cell as "moved" so the first match pass sees it 
+  mul  $t8, $t1, 7
+  add  $t8, $t8, $t6
+  la   $t9, GRAVITY_FLAGS
+  add  $t9, $t9, $t8
+  li   $t8, 1
+  sb   $t8, 0($t9)
+
   addi $t1, $t1, 1          # Move down for the next bubble
   addi $t4, $t4, 1
   j throw_place_loop
@@ -798,6 +809,17 @@ throw_cascade_loop:
   beqz $v0, throw_cascade_done # If nothing cleared, we're done
   
   li $s3, 0                    # Any subsequent checks are gravity cascades
+
+  # flash the highlighted bubbles
+  jal draw_grid                # repaint grid (shows COLOR_LIGHT_GRAY cells)
+  jal draw_character           # keep player visible
+
+  li $v0, 32                   # sleep syscall
+  lw $a0, MATCH_FLASH_DELAY                  # pause for 200ms so the player sees the highlight
+  syscall
+
+  # now remove them
+  jal clear_pending            # set marked cells to black, reset flags
   
   # Clear the GRAVITY_FLAGS array before applying gravity
   la $t0, GRAVITY_FLAGS
@@ -880,8 +902,9 @@ cvm_check_match:
   lw $t9, 56($t4)            # two below
   bne $t9, $t5, cvm_next_col
 
-  # CHECK GRAVITY FLAGS IF NOT FIRST THROW 
-  beqz $s5, cvm_check_flags
+  # CHECK GRAVITY FLAGS — a match only counts if one of the 3 bubbles
+  # was moved (by gravity, or by the throw itself)
+  j cvm_check_flags
 
 cvm_trigger:
   # found vertical trigger
@@ -896,7 +919,7 @@ cvm_trigger:
   sw   $t2, 4($sp)
   sw   $s4, 8($sp)
 
-  jal flood_fill             # explode bubbles
+  jal flood_mark             # highlights and doesn't clear
 
   lw   $t1, 0($sp)
   lw   $t2, 4($sp)
@@ -937,7 +960,7 @@ cvm_done:
   move $v0, $s4
   POP_RA()
   
-flood_fill:
+flood_mark:
   PUSH_RA()
   
   # Save $a0, $a1, $s2, $s4 so they aren't destroyed by recursion
@@ -960,32 +983,45 @@ flood_fill:
   
   bne $t2, $s2, ff_done      # If not matching color, stop
 
-  # Clear it!
-  sw $zero, 0($t1)
+  # Already marked? stop (prevents infinite recursion)
+  mul $t3, $a0, 7
+  add $t3, $t3, $a1
+  la  $t4, PENDING_GRID
+  add $t4, $t4, $t3
+  lb  $t5, 0($t4)
+  bnez $t5, ff_done
+
+  # Mark it as pending
+  li  $t5, 1
+  sb  $t5, 0($t4)
+
+  # Highlight it light gray so the player sees the match
+  lw  $t5, COLOR_LIGHT_GRAY
+  sw  $t5, 0($t1)
   
   # Recurse Up
   lw $a0, 0($sp)
   lw $a1, 4($sp)
   addi $a0, $a0, -1
-  jal flood_fill
+  jal flood_mark
   
   # Recurse Down
   lw $a0, 0($sp)
   lw $a1, 4($sp)
   addi $a0, $a0, 1
-  jal flood_fill
+  jal flood_mark
   
   # Recurse Left
   lw $a0, 0($sp)
   lw $a1, 4($sp)
   addi $a1, $a1, -1
-  jal flood_fill
+  jal flood_mark
   
   # Recurse Right
   lw $a0, 0($sp)
   lw $a1, 4($sp)
   addi $a1, $a1, 1
-  jal flood_fill
+  jal flood_mark
 
 ff_done:
   # Restore $s2 and $s4
@@ -995,6 +1031,25 @@ ff_done:
   
   POP_RA()
 
+# Clear every grid cell that flood_mark flagged as pending, and reset the flags.
+# Grid becomes black at those cells; caller must redraw and run gravity.
+clear_pending:
+  la  $t0, game_grid
+  la  $t1, PENDING_GRID
+  li  $t2, 0
+clear_pending_loop:
+  bge $t2, 140, clear_pending_done    # 20 rows * 7 cols
+  lb  $t3, 0($t1)
+  beqz $t3, cp_skip
+  sw  $zero, 0($t0)                   # clear grid cell to black
+  sb  $zero, 0($t1)                   # reset pending flag
+cp_skip:
+  addi $t0, $t0, 4
+  addi $t1, $t1, 1
+  addi $t2, $t2, 1
+  j    clear_pending_loop
+clear_pending_done:
+  jr   $ra
 
 # ----------------------------------------------------------- GRAVITY
 
