@@ -235,6 +235,7 @@ pause_loop:
   lw $t2, 4($t0)  
   
   beq $t2, 0x70, resume #resume: back to repainting the screen and game loop
+  beq $t2, 0x71, quit         # if ASCII = 'q', quit game
   
   j pause_loop
   
