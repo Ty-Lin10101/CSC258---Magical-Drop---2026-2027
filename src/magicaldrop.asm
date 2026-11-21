@@ -82,7 +82,7 @@ FRAME_COUNT: .word 0 #one pass of the the game loop = 1 frame. Framce count = ho
 # --------------------------------------------------------------------------------------------------- MACROS
 
 .macro PUSH_RA()
-    addi $sp, $sp, -8
+    addi $sp, $sp, -8 # reserve 2 words; only $ra is stored (at 4($sp)), 1 slot spare 
     sw $ra, 4($sp)
 .end_macro
 
@@ -98,6 +98,9 @@ FRAME_COUNT: .word 0 #one pass of the the game loop = 1 frame. Framce count = ho
     addi $sp, $sp, 8  
 .end_macro
 
+# CELL_ADDR(dst, row, col, base): dst = address of game_grid cell (row, col); 7 x 20 
+#   base = start of game_grid (la), row 0–19, col 0–6
+# Purpose: check or change the game board's data  (grid row, grid col) 
 .macro CELL_ADDR(%dst, %row, %col, %base)
     mul %dst, %row, COLS
     add %dst, %dst, %col
@@ -107,7 +110,9 @@ FRAME_COUNT: .word 0 #one pass of the the game loop = 1 frame. Framce count = ho
 
 # %dst = display address of unit (%row, %col): base + 4 * (row * width + col)
 # %dst may equal %row, but must differ from %col, %width and %base
-#
+# dst = address of screen pixel (row, col); base = 0x10008000 (ADDR_DSPL), width = 32
+# purpose: paint a pixel
+# screen row, screen col
 .macro SCREEN_ADDR(%dst, %row, %col, %width, %base)
     mul %dst, %row, %width
     add %dst, %dst, %col
@@ -512,28 +517,28 @@ add_bubble_row:
 # (counting downward so we never overwrite a row before copying it)
 shift_grid_down:
   la $t0, game_grid
-  li $t1, 104                    # start at end of row 14
+  li $t1, 104                    # start at end of row 14 (row x 7 + col(6 is last)) 
 
 shift_loop:
   blt $t1, 7, check_overflow    # done shifting: check for game over
   sll $t2, $t1, 2
   add $t2, $t0, $t2             # $t2 = &grid[i]
-  lw $t3, -28($t2)              # grid[i - 7] (the cell directly above)
-  sw $t3, 0($t2)
-  addi $t1, $t1, -1
+  lw $t3, -28($t2)              # grid[i - 7] (copying the cell directly above) (28 = 7 * 4)
+  sw $t3, 0($t2)                # store that colour into the current cell 
+  addi $t1, $t1, -1          
   j shift_loop
 
 # Game over if anything sits in row 14 (indices 98-104). Used after adding a row and after a throw.
 check_overflow:
   la   $t0, game_grid
-  li   $t1, 98
+  li   $t1, 98 # row 14 = indicies 98-104 (game board is rows 0-13, 14th is the spare below) 
 check_loop:
   bgt  $t1, 104, no_game_over
   sll  $t2, $t1, 2
-  add  $t2, $t0, $t2
-  lw   $t3, 0($t2)
-  bnez $t3, game_over           # game_over never returns
-  addi $t1, $t1, 1
+  add  $t2, $t0, $t2            #$t2 = address of grid[i] 
+  lw   $t3, 0($t2)              
+  bnez $t3, game_over           # bubble pushed off the board --> game_over never returns
+  addi $t1, $t1, 1              
   j    check_loop
 no_game_over:
   jr   $ra
@@ -547,20 +552,22 @@ fill_top_row:
 fill_loop:
   bge $t1, 7, fill_done
   li $v0, 42                    # syscall 42: random int in [0, $a1)
-  li $a0, 0
-  li $a1, 4                     # 4 colors
-  syscall                       # $a0 = random 0..3
-  sll $a0, $a0, 2
-  add $a0, $t4, $a0
+  li $a0, 0                     # default generator
+  li $a1, 4                     # 4 colors (from our list, BUBBLE_COLORS)
+  syscall                       # $a0 = random 0..3 
+  
+  sll $a0, $a0, 2               # x 4 byte offset into colour list 
+  add $a0, $t4, $a0             # address of BUBBLE_COLORS[r]
   lw $t5, 0($a0)                # chosen color
-  sll $t2, $t1, 2
+  
+  sll $t2, $t1, 2               # back to the current col, byte offset into row 0               
   add $t2, $t0, $t2
   sw $t5, 0($t2)                # grid[0][col] = color
   addi $t1, $t1, 1
   j fill_loop
 
 fill_done:
-  jr $ra
+  jr $ra                        #return to add_bubble_row
 
 # paint the whole grid onto the display
 draw_grid:
@@ -670,8 +677,8 @@ find_lowest_bubble_in_col:
   li  $t2, 13                  # start at bottom row
 
 find_loop:
-  bltz $t2, find_none
-  CELL_ADDR($t3, $t2, $t1, $t0)   # &grid[row][col]
+  bltz $t2, find_none           
+  CELL_ADDR($t3, $t2, $t1, $t0)# &t3 = address of grid[row][col]
   lw  $t4, 0($t3)              # cell color
   bnez $t4, find_hit           # non-zero → found
   addi $t2, $t2, -1            # else move up one row
@@ -698,14 +705,14 @@ grab_loop:
   lw $s1, HELD_COLOR
   
   jal find_lowest_bubble_in_col
-  beqz $t0, grab_done          # Empty column --> stop
+  beqz $t0, grab_done          # Empty column --> stop. $t0 stores whether something was found or not 
 
   # Capacity check
   lw $t7, MAX_HOLD
-  bge $s0, $t7, grab_done      # Hand full --> stop
+  bge $s0, $t7, grab_done      # Hand full (HELD_COUNT >= MAX_HOLD) --> stop
 
   # Color check
-  beqz $s0, grab_accept        # Hand empty --> Accept
+  beqz $s0, grab_accept        # Hand empty --> Accept (first colour can be anything) 
   bne $s1, $v0, grab_done      # Different color --> Stop grabbing
 
 grab_accept:
@@ -748,15 +755,15 @@ check_throw:
   lw   $t0, HELD_COUNT
   beqz $t0, throw_done         # If hands are empty, do nothing
 
-  lw   $t6, PLAYER_OFFSET_X
-  addi $t6, $t6, -1            # grid column (0-6)
+  lw   $t6, PLAYER_OFFSET_X   
+  addi $t6, $t6, -1            # grid column (0-6), col = X - 1   
   la   $t7, game_grid
   li   $t1, 13
 
 find_landing_spot:
-  bltz $t1, throw_empty_col
-  CELL_ADDR($t2, $t1, $t6, $t7)
-  lw   $t3, 0($t2)
+  bltz $t1, throw_empty_col #past the top --> empty column 
+  CELL_ADDR($t2, $t1, $t6, $t7) # address of grid[row][col]
+  lw   $t3, 0($t2)          # what is at grid[row][col]
   bnez $t3, throw_at_place  # Hit a bubble, land here
 
   addi $t1, $t1, -1         # Move up
@@ -775,22 +782,22 @@ throw_loop_start:
   li   $t4, 0               # Loop counter
 
 throw_place_loop:
-  bge  $t4, $t0, throw_check_matches
-  bgt  $t1, 19, throw_check_matches
+  bge  $t4, $t0, throw_check_matches # i >= HELD_COUNT --> check for matches
+  bgt  $t1, 19, throw_check_matches 
 
-  CELL_ADDR($t2, $t1, $t6, $t7)
-  sw   $t5, 0($t2)          # Place bubble
+  CELL_ADDR($t2, $t1, $t6, $t7) #remember, t7 stores game_grid starting address
+  sw   $t5, 0($t2)          # Placed a bubble at (row, col)
 
-  # flag this cell as "moved" so the first match pass sees it 
-  mul  $t8, $t1, 7
-  add  $t8, $t8, $t6
+  # flag this cell as "moved" so the first match pass sees it （marking this cell in GRAVITY_FLAGS = 1) 
+  mul  $t8, $t1, 7 
+  add  $t8, $t8, $t6  #index = row x 7 + col 
   la   $t9, GRAVITY_FLAGS
-  add  $t9, $t9, $t8
+  add  $t9, $t9, $t8  #address = GRAVITY_FLAGS = index
   li   $t8, 1
-  sb   $t8, 0($t9)
+  sb   $t8, 0($t9)  #store 1 BYTE  
 
   addi $t1, $t1, 1          # Move down for the next bubble
-  addi $t4, $t4, 1
+  addi $t4, $t4, 1          # one more has been placed
   j throw_place_loop
 
 
@@ -799,7 +806,7 @@ throw_check_matches:
   addi $s6, $s6, -1            # s6 = target column
   lw $s7, HELD_COLOR           # s7 = target color
 
-  li $s3, 1                    # $s3 = 1 (flag: this is the initial throw)
+  li $s3, 1                    # $s3 = 1 (flag): this is the initial throw)
 
 throw_cascade_loop:
   move $a0, $s6
@@ -961,48 +968,53 @@ cvm_done:
   POP_RA()
   
 flood_mark:
-  PUSH_RA()
+  PUSH_RA() #recursion, save MY current address 
   
   # Save $a0, $a1, $s2, $s4 so they aren't destroyed by recursion
   addi $sp, $sp, -16
-  sw $a0, 0($sp)
-  sw $a1, 4($sp)
-  sw $s2, 8($sp)
-  sw $s4, 12($sp)
+  sw $a0, 0($sp)  #MY row
+  sw $a1, 4($sp)  #MY col (saved row and col so when we recurse on neighbours, we know who the neighbours are)
+  sw $s2, 8($sp)  #the target colour (what was matched, so the subcalls know what to check against)
+  sw $s4, 12($sp) #(a counter the caller uses) 
   
-  # Bounds check
-  bltz $a0, ff_done
-  bge $a0, 20, ff_done
-  bltz $a1, ff_done
-  bge $a1, 7, ff_done
+  # BASE CASE 1: Bounds check (off the board)  -------------------------------------
+  bltz $a0, ff_done #row < 0
+  bge $a0, 20, ff_done #row >= 20 (ACCOUNTS FOR OVERFLOW)
+      # game_grid: visible board is 7 cols × 14 rows (rows 0–13).
+      # Rows 14–19 are spare: a full-hand throw (MAX_HOLD = 6) can land up to 6 rows
+      # past the board before matching / check_overflow runs.
+  bltz $a1, ff_done #col < 0
+  bge $a1, 7, ff_done #col >= 7 
   
-  # Check cell
+  # BASE CASE 2: Check cell (not the target colour?) -------------------------------------
   la $t0, game_grid
   CELL_ADDR($t1, $a0, $a1, $t0)
   lw $t2, 0($t1)
   
   bne $t2, $s2, ff_done      # If not matching color, stop
 
-  # Already marked? stop (prevents infinite recursion)
+  # BASE CASE 3:  Already marked? stop (prevents infinite recursion)  -------------------------------------
   mul $t3, $a0, 7
-  add $t3, $t3, $a1
-  la  $t4, PENDING_GRID
-  add $t4, $t4, $t3
-  lb  $t5, 0($t4)
-  bnez $t5, ff_done
+  add $t3, $t3, $a1         # index = row x 7 + col
+  la  $t4, PENDING_GRID     
+  add $t4, $t4, $t3        # address of the cell's flag 
+  lb  $t5, 0($t4)         
+  bnez $t5, ff_done        #t5 = the flag = 1? then STOP 
 
   # Mark it as pending
   li  $t5, 1
-  sb  $t5, 0($t4)
+  sb  $t5, 0($t4) 
 
   # Highlight it light gray so the player sees the match
   lw  $t5, COLOR_LIGHT_GRAY
-  sw  $t5, 0($t1)
+  sw  $t5, 0($t1) 
+  
+  #Spread to the neighbours: up down left right 
   
   # Recurse Up
-  lw $a0, 0($sp)
-  lw $a1, 4($sp)
-  addi $a0, $a0, -1
+  lw $a0, 0($sp)  #MY row (reload this, since last call may have changed $a0) (read back from Stack frame)
+  lw $a1, 4($sp)  #MY col 
+  addi $a0, $a0, -1 #call on row above
   jal flood_mark
   
   # Recurse Down
@@ -1020,12 +1032,12 @@ flood_mark:
   # Recurse Right
   lw $a0, 0($sp)
   lw $a1, 4($sp)
-  addi $a1, $a1, 1
+  addi $a1, $a1, 1 
   jal flood_mark
 
 ff_done:
-  # Restore $s2 and $s4
-  lw $s2, 8($sp)
+  # Restore $s2 and $s4, fufilling contract (s2 is target colour, s4 is match checker's counter ) 
+  lw $s2, 8($sp) 
   lw $s4, 12($sp)
   addi $sp, $sp, 16
   
