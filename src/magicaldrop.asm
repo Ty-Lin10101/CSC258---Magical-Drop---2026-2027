@@ -8,10 +8,10 @@
 # creation, and will indicate otherwise when it is not.
 #
 ######################## Bitmap Display Configuration ########################
-# - Unit width in pixels:       TODO
-# - Unit height in pixels:      TODO
-# - Display width in pixels:    TODO
-# - Display height in pixels:   TODO
+# - Unit width in pixels:       8
+# - Unit height in pixels:      8
+# - Display width in pixels:    256
+# - Display height in pixels:   256
 # - Base Address for Display:   0x10008000 ($gp)
 ##############################################################################
 
@@ -874,8 +874,8 @@ check_vertical_matches:
   PUSH_RA()
   li $s4, 0                  # $s4 = found flag (0 = none, 1 = cleared)
   
-  move $s0, $a0              # $s0 = target column (-1 if all)
-  move $s1, $a1              # $s1 = target color
+  move $s0, $a0              # $s0 = target column (-1 means check all columns)
+  move $s1, $a1              # $s1 = target color (0 means any colour) 
   move $s5, $a2              # $s5 = is_first_throw
   
   li $t1, 0                  # row
@@ -886,7 +886,7 @@ cvm_row_loop:
   # Set up column loop
   # If s0 == -1, check all columns (0 to 6). Otherwise, just check s0.
   li $t2, 0                  # col counter
-  bltz $s0, cvm_col_loop_start
+  bltz $s0, cvm_col_loop_start # -1 --> check every col 
   move $t2, $s0              # Start at target col
   
 cvm_col_loop_start:
