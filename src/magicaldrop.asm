@@ -802,18 +802,19 @@ throw_place_loop:
   j throw_place_loop
 
 
-throw_check_matches:
+throw_check_matches:        #deals with matches created by the throw, along with throw_cascade_loop
   lw $s6, PLAYER_OFFSET_X
-  addi $s6, $s6, -1            # s6 = target column
+  addi $s6, $s6, -1            # s6 = target column 
   lw $s7, HELD_COLOR           # s7 = target color
 
   li $s3, 1                    # $s3 = 1 (flag): this is the initial throw)
 
-throw_cascade_loop:
-  move $a0, $s6
-  move $a1, $s7
+throw_cascade_loop:            
+  move $a0, $s6                # input: which column  (1st time: mine; later: −1)
+  move $a1, $s7                # input: which colour  (1st time: mine; later: 0)
   move $a2, $s3                # Pass the first-throw flag to the checker
-  jal check_vertical_matches
+  
+  jal check_vertical_matches   # find triggers → flood_mark paints them GRAY in game_grid
   beqz $v0, throw_cascade_done # If nothing cleared, we're done
   
   li $s3, 0                    # Any subsequent checks are gravity cascades
@@ -823,14 +824,14 @@ throw_cascade_loop:
   jal draw_character           # keep player visible
 
   li $v0, 32                   # sleep syscall
-  lw $a0, MATCH_FLASH_DELAY                  # pause for 200ms so the player sees the highlight
-  syscall
+  lw $a0, MATCH_FLASH_DELAY    # pause for 200ms so the player sees the highlight
+  syscall                       
 
   # now remove them
   jal clear_pending            # set marked cells to black, reset flags
   
   # Clear the GRAVITY_FLAGS array before applying gravity
-  la $t0, GRAVITY_FLAGS
+  la $t0, GRAVITY_FLAGS 
   li $t1, 0
 clear_flags:
   bge $t1, 560, flags_cleared
@@ -840,15 +841,15 @@ clear_flags:
   j clear_flags
 flags_cleared:
 
-  jal apply_gravity
+  jal apply_gravity #now the gravity flags checks what was moved after the clear, not the throw
   
-  # After the first check, scan all columns and match any color
+  # After the first check, scan all columns and match any color (not just target col and colour)
   li $s6, -1                   # Scan ALL columns
   li $s7, 0                    # 0 means "match any color"
   j throw_cascade_loop
   
 throw_cascade_done:
-  # erase first while HELD_COUNT is still > 0
+  # erase first while HELD_COUNT is still > 0 (erase_held_bubbles uses HELD_COUNT to know how many to erase)
   jal erase_held_bubbles
 
   # clear the hand state
@@ -866,6 +867,11 @@ throw_done:
   POP_RA()
 
 # ----------------------------------------------------------- MATCHING LOGIC
+#Target column and colour = where could a NEW match possibly be? 
+#Right after a throw → only your column and colour.
+#After gravity → anywhere, any colour.(hence no target colour, and check all columns)
+#The match itself is always "3 of the same colour as each other."
+
 
 # $a0 = target column (0-6), or -1 for all columns
 # $a1 = target color (0 for any color)
@@ -892,23 +898,23 @@ cvm_row_loop:
 cvm_col_loop_start:
   # Fall through to check this column
 
-cvm_check_col:
+cvm_check_col: #check one cell 
   # Calculate address of (row, col)
   la $t3, game_grid
-  CELL_ADDR($t4, $t1, $t2, $t3)   # $t4 = &grid[row][col]
-  lw $t5, 0($t4)
+  CELL_ADDR($t4, $t1, $t2, $t3)   # $t4 = grid[row][col]
+  lw $t5, 0($t4)              
   beqz $t5, cvm_next_col     # If empty, skip
   
   # Color check (if s1 != 0)
-  beqz $s1, cvm_check_match
-  bne $t5, $s1, cvm_next_col
+  beqz $s1, cvm_check_match # any colour mode 
+  bne $t5, $s1, cvm_next_col #not the target colour, falls into Piece 4
 
 cvm_check_match:
   # Check row + 1 (below it)
   lw $t9, 28($t4)            # cell below (next row = +7 words)
-  bne $t9, $t5, cvm_next_col
-  lw $t9, 56($t4)            # two below
-  bne $t9, $t5, cvm_next_col
+  bne $t9, $t5, cvm_next_col # not the same as me, next cell
+  lw $t9, 56($t4)            # two below (14 * 4) 
+  bne $t9, $t5, cvm_next_col 
 
   # CHECK GRAVITY FLAGS — a match only counts if one of the 3 bubbles
   # was moved (by gravity, or by the throw itself)
@@ -918,10 +924,10 @@ cvm_trigger:
   # found vertical trigger
   li $s4, 1
   move $s2, $t5
-  move $a0, $t1
-  move $a1, $t2              # trigger col
+  move $a0, $t1               #start flood mark at current row
+  move $a1, $t2               #current col 
 
-  # Save loop registers
+  # Save loop registers (row, col, found) 
   addi $sp, $sp, -12
   sw   $t1, 0($sp)
   sw   $t2, 4($sp)
@@ -929,7 +935,7 @@ cvm_trigger:
 
   jal flood_mark             # highlights and doesn't clear
 
-  lw   $t1, 0($sp)
+  lw   $t1, 0($sp)      #get row, col and found back 
   lw   $t2, 4($sp)
   lw   $s4, 8($sp)
   addi $sp, $sp, 12
@@ -938,13 +944,13 @@ cvm_trigger:
 cvm_check_flags:
   # Check if AT LEAST ONE of the 3 stacked bubbles was moved by gravity
   la   $t7, GRAVITY_FLAGS
-  mul  $t3, $t1, 7
-  add  $t3, $t3, $t2
-  add  $t3, $t7, $t3         # $t3 = &GRAVITY_FLAGS[row][col]
+  mul  $t3, $t1, 7           # row * 7
+  add  $t3, $t3, $t2         # add the col 
+  add  $t3, $t7, $t3         # $t3 = GRAVITY_FLAGS[row][col] (starting address of GRAVITY flags + index)
 
   lb   $t9, 0($t3)           # this cell
-  bnez $t9, cvm_trigger
-  lb   $t9, 7($t3)           # cell below (row + 1)
+  bnez $t9, cvm_trigger      # 1 --> moved 
+  lb   $t9, 7($t3)           # cell below (row + 1) 
   bnez $t9, cvm_trigger
   lb   $t9, 14($t3)          # two below (row + 2)
   bnez $t9, cvm_trigger
@@ -965,7 +971,7 @@ cvm_next_row:
   j cvm_row_loop
 
 cvm_done:
-  move $v0, $s4
+  move $v0, $s4 # return found (0 or 1) 
   POP_RA()
   
 flood_mark:
@@ -1047,18 +1053,18 @@ ff_done:
 # Clear every grid cell that flood_mark flagged as pending, and reset the flags.
 # Grid becomes black at those cells; caller must redraw and run gravity.
 clear_pending:
-  la  $t0, game_grid
-  la  $t1, PENDING_GRID
+  la  $t0, game_grid     #pointer for grid
+  la  $t1, PENDING_GRID  #pointer for the marks
   li  $t2, 0
 clear_pending_loop:
   bge $t2, 140, clear_pending_done    # 20 rows * 7 cols
-  lb  $t3, 0($t1)
-  beqz $t3, cp_skip
+  lb  $t3, 0($t1)                     #current cell's mark
+  beqz $t3, cp_skip                   #not marked --> leave it
   sw  $zero, 0($t0)                   # clear grid cell to black
   sb  $zero, 0($t1)                   # reset pending flag
 cp_skip:
-  addi $t0, $t0, 4
-  addi $t1, $t1, 1
+  addi $t0, $t0, 4                    #next grid cell 
+  addi $t1, $t1, 1                    #next mark
   addi $t2, $t2, 1
   j    clear_pending_loop
 clear_pending_done:
@@ -1071,7 +1077,7 @@ apply_gravity:
   sw   $ra, 4($sp)
   sw   $s0, 0($sp)
 
-  la   $s0, game_grid
+  la   $s0, game_grid         
   li   $t1, 0                  # col = 0
 
 gravity_col_loop:
@@ -1081,40 +1087,40 @@ gravity_col_loop:
   li   $t3, 0                 # write_row
 
 gravity_row_loop:
-  bge $t2, 20, gravity_next_col
+  bge $t2, 20, gravity_next_col #all 20 rows read, go next colx1
 
   # Read cell at (read_row, col)
   CELL_ADDR($t5, $t2, $t1, $s0)
-  lw   $t6, 0($t5)
+  lw   $t6, 0($t5)  #current bubble
 
   beqz $t6, gravity_skip       # If empty, skip
 
   # Move to write_row
   CELL_ADDR($t5, $t3, $t1, $s0)
-  sw   $t6, 0($t5)
+  sw   $t6, 0($t5)  #store bubble in write row
 
   # Only clear the original cell if it actually moved
-  beq  $t2, $t3, gravity_no_move
+  beq  $t2, $t3, gravity_no_move  #read = write --> it didn't move 
   
   # if reached this point, the bubble moved
   
   # Clear read_row properly!
   mul  $t4, $t2, 7
-  add  $t4, $t4, $t1
+  add  $t4, $t4, $t1  
   sll  $t4, $t4, 2
-  add  $t5, $s0, $t4
-  sw   $zero, 0($t5)
+  add  $t5, $s0, $t4   # address of (read_row, col) 
+  sw   $zero, 0($t5)   # grid[read_row][col] is cleared now
 
   # Set the gravity flag at the new write_row
   mul  $t4, $t3, 7
-  add  $t4, $t4, $t1
+  add  $t4, $t4, $t1  #index of (write_row, col) 
   la   $t5, GRAVITY_FLAGS
-  add  $t5, $t5, $t4
-  li   $t6, 1
-  sb   $t6, 0($t5)
+  add  $t5, $t5, $t4  
+  li   $t6, 1    
+  sb   $t6, 0($t5)  #flag = 1 so it means that this bubble moved
   
 gravity_no_move:
-  addi $t3, $t3, 1            # Move write_row down
+  addi $t3, $t3, 1            # Move write_row down (spot is now filled)
 
 gravity_skip:
   addi $t2, $t2, 1            # Move read_row down
@@ -1125,7 +1131,7 @@ gravity_next_col:
   j gravity_col_loop
 
 gravity_done:
-  lw   $s0, 0($sp)
+  lw   $s0, 0($sp)    
   lw   $ra, 4($sp)
   addi $sp, $sp, 8
   jr   $ra
