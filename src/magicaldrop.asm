@@ -234,7 +234,7 @@ pause_loop:
   
   lw $t0, ADDR_KBRD # remember, t0 just stores where the address is 
   lw $t1, 0($t0) #flag at the keyboard address: 1 = a key was pressed   
-  
+
   beqz $t1, pause_loop #if no key was pressed, stay paused 
   
   lw $t2, 4($t0)  
@@ -803,6 +803,9 @@ throw_place_loop:
 
 
 throw_check_matches:        #deals with matches created by the throw, along with throw_cascade_loop
+  # ERASE THE HELD BUBBLES IMMEDIATELY AFTER THROWING
+  jal erase_held_bubbles
+  
   lw $s6, PLAYER_OFFSET_X
   addi $s6, $s6, -1            # s6 = target column 
   lw $s7, HELD_COLOR           # s7 = target color
