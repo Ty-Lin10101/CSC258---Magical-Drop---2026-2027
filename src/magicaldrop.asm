@@ -81,22 +81,17 @@ FRAME_COUNT: .word 0 #one pass of the the game loop = 1 frame. Framce count = ho
 
 # --------------------------------------------------------------------------------------------------- MACROS
 
-.macro PUSH_RA()
-    addi $sp, $sp, -8 # reserve 2 words; only $ra is stored (at 4($sp)), 1 slot spare 
-    sw $ra, 4($sp)
+.macro save_ra()
+    addi $sp, $sp, -4 # reserve 1 word; only $ra is stored (at 0($sp))
+    sw $ra, 0($sp)
 .end_macro
 
-.macro POP_RA()
-    lw $ra, 4($sp)
-    addi $sp, $sp, 8
+.macro restore_ra()
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4
     jr $ra
 .end_macro
 
-# Cleans up the stack frame, but DOES NOT return (continues execution)
-.macro POP_FRAME()
-    lw $ra, 4($sp)
-    addi $sp, $sp, 8  
-.end_macro
 
 # CELL_ADDR(dst, row, col, base): dst = address of game_grid cell (row, col); 7 x 20 
 #   base = start of game_grid (la), row 0–19, col 0–6
@@ -219,7 +214,7 @@ sleep:
   jal draw_held_bubbles
 
   li $v0, 32                    # sleep syscall
-  li $a0, 16                    # ~16 ms  ---> now 250ms = 0.25s,  CHANGE THIS LATER
+  li $a0, 16                    
   syscall
   j game_loop
 
@@ -232,7 +227,7 @@ pause_loop:
   li $a0, 16
   syscall
   
-  lw $t0, ADDR_KBRD # remember, t0 just stores where the address is 
+  lw $t0, ADDR_KBRD # just stores address
   lw $t1, 0($t0) #flag at the keyboard address: 1 = a key was pressed   
 
   beqz $t1, pause_loop #if no key was pressed, stay paused 
@@ -259,7 +254,8 @@ quit:
 # --------------------------------------------------------------------------------------------------- GAME OVER 
 
 game_over:
-  # Draw a giant white X over the screen to indicate game over
+  # Cover the screen in white to indicate game over
+  # Program keeps running until player quits
   lw $t0, ADDR_DSPL
   li $t1, 0
   li $t2, 32
@@ -346,7 +342,7 @@ draw_barrier_end:
 # --------------------------------------------------------------------------------------------------- DRAWING PLAYER 
 
 draw_character:
-  PUSH_RA()
+  save_ra()
   
   jal get_player_address
   move $t8, $v0
@@ -357,10 +353,10 @@ draw_character:
 
   jal draw_trajectory      
 
-  POP_RA()
+  restore_ra()
 
 erase_character:
-  PUSH_RA()
+  save_ra()
   
   jal get_player_address
   move $t4, $v0
@@ -368,44 +364,57 @@ erase_character:
   sw $zero, 0($t4)              # $zero = 0 = black
   jal erase_trajectory
   
-  POP_RA()
+  restore_ra()
 
-# Paints every held slot with the color in $a1 (0 = erase). Preserves $s0-$s2.
-paint_held_bubbles:
-  addi $sp, $sp, -16
-  sw   $ra, 0($sp)
-  sw   $s0, 4($sp)              # counter
-  sw   $s1, 8($sp)              # bound (HELD_COUNT)
-  sw   $s2, 12($sp)             # color
-  move $s2, $a1
-  lw   $s1, HELD_COUNT
-  li   $s0, 0
-paint_held_loop:
-  bge  $s0, $s1, paint_held_done
-  move $a0, $s0
-  jal  get_held_address
-  sw   $s2, 0($v0)
-  addi $s0, $s0, 1
-  j    paint_held_loop
-paint_held_done:
-  lw   $ra, 0($sp)
-  lw   $s0, 4($sp)
-  lw   $s1, 8($sp)
-  lw   $s2, 12($sp)
-  addi $sp, $sp, 16
-  jr   $ra
-
-# Both of these tail-jump, so paint_held_bubbles returns straight to the caller.
+# Erase every held slot (paint black)
 erase_held_bubbles:
-  li   $a1, 0
-  j    paint_held_bubbles
+    addi $sp, $sp, -12
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
 
-draw_held_bubbles:              # all held bubbles share HELD_COLOR
-  lw   $a1, HELD_COLOR
-  j    paint_held_bubbles
+    lw   $s0, HELD_COUNT
+    li   $s1, 0                  # slot index
+erase_held_loop:
+    bge  $s1, $s0, erase_held_done
+    move $a0, $s1
+    jal  get_held_address
+    sw   $zero, 0($v0)
+    addi $s1, $s1, 1
+    j    erase_held_loop
+erase_held_done:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
+
+# Draw every held slot in HELD_COLOR
+draw_held_bubbles:
+    addi $sp, $sp, -12
+    sw   $ra, 0($sp)
+    sw   $s0, 4($sp)
+    sw   $s1, 8($sp)
+
+    lw   $s0, HELD_COUNT
+    li   $s1, 0                  # slot index
+draw_held_loop:
+    bge  $s1, $s0, draw_held_done
+    move $a0, $s1
+    jal  get_held_address
+    lw   $t0, HELD_COLOR
+    sw   $t0, 0($v0)
+    addi $s1, $s1, 1
+    j    draw_held_loop
+draw_held_done:
+    lw   $ra, 0($sp)
+    lw   $s0, 4($sp)
+    lw   $s1, 8($sp)
+    addi $sp, $sp, 12
+    jr   $ra
   
 
-# $a0 = slot index (0 = nearest player). Returns address in $v0.
+# $a0 = slot, returns screen address of that held-bubble slot
 get_held_address:
   lw   $t8, START_Y
   lw   $t0, PLAYER_OFFSET_Y
@@ -427,7 +436,7 @@ get_held_address:
   
 draw_trajectory:
   lw $t0, ADDR_DSPL             # Base display address
-  lw $s3, DISPLAY_WIDTH         # Screen width (64)
+  lw $s3, DISPLAY_WIDTH         # Screen width (32)
   lw $s4, START_X               # Barrier start X
   lw $s5, START_Y               # Barrier start Y
   # Determine the X column (same column as the player)
@@ -474,7 +483,7 @@ trajectory_end:
   jr $ra
 
 
-erase_trajectory:               # repaints only the player's current column
+erase_trajectory: 
   lw $t0, ADDR_DSPL
   lw $t3, DISPLAY_WIDTH
   lw $t4, START_X
@@ -506,16 +515,15 @@ erase_done:
 
 # shift everything down, fill a new top row, repaint
 add_bubble_row:
-  PUSH_RA()     
-  # these functions override $ra after returning
+  save_ra()     
   jal shift_grid_down
   jal fill_top_row
   jal draw_grid
 
-  POP_RA()
+  restore_ra()
 
-# grid[i] = grid[i-7] for i = 97 down to 7
-# (counting downward so we never overwrite a row before copying it)
+# grid[i] = grid[i-7], starting from the last cell of row 14 (index 104)
+# going down so we never overwrite a cell before copying it
 shift_grid_down:
   la $t0, game_grid
   li $t1, 104                    # start at end of row 14 (row x 7 + col(6 is last)) 
@@ -648,7 +656,7 @@ do_move:
   j sleep
   
 move_player:
-  PUSH_RA()
+  save_ra()
 
   lw $t3, PLAYER_OFFSET_X
   add $s1, $t3, $a0   # $s1 = new X position
@@ -662,8 +670,8 @@ move_player:
   jal draw_held_bubbles
 
 move_done:
-  POP_FRAME()
-  jr $ra
+  restore_ra()
+  
 
 # ----------------------------------------------------------- GRAB
 
@@ -698,7 +706,7 @@ find_none:
   jr   $ra
 
 grab_bubble:
-  PUSH_RA()
+  save_ra()
 
 grab_loop:
   # Save our current held state before calling the finder
@@ -742,7 +750,7 @@ grab_done:
   jal  draw_held_bubbles
 
 grab_exit:
-  POP_RA()
+  restore_ra()
 
 # ----------------------------------------------------------- THROW LOGIC
   
@@ -751,7 +759,7 @@ do_throw:
   j sleep
 
 check_throw:
-  PUSH_RA()
+  save_ra()
 
   lw   $t0, HELD_COUNT
   beqz $t0, throw_done         # If hands are empty, do nothing
@@ -789,7 +797,7 @@ throw_place_loop:
   CELL_ADDR($t2, $t1, $t6, $t7) #remember, t7 stores game_grid starting address
   sw   $t5, 0($t2)          # Placed a bubble at (row, col)
 
-  # flag this cell as "moved" so the first match pass sees it （marking this cell in GRAVITY_FLAGS = 1) 
+  # mark as moved so the first cvm pass sees this thrown bubble
   mul  $t8, $t1, 7 
   add  $t8, $t8, $t6  #index = row x 7 + col 
   la   $t9, GRAVITY_FLAGS
@@ -802,25 +810,22 @@ throw_place_loop:
   j throw_place_loop
 
 
-throw_check_matches:        #deals with matches created by the throw, along with throw_cascade_loop
-  # ERASE THE HELD BUBBLES IMMEDIATELY AFTER THROWING
+throw_check_matches:   
+  # erase held bubbles immediately after throwing
   jal erase_held_bubbles
   
   lw $s6, PLAYER_OFFSET_X
   addi $s6, $s6, -1            # s6 = target column 
   lw $s7, HELD_COLOR           # s7 = target color
 
-  li $s3, 1                    # $s3 = 1 (flag): this is the initial throw)
 
 throw_cascade_loop:            
   move $a0, $s6                # input: which column  (1st time: mine; later: −1)
   move $a1, $s7                # input: which colour  (1st time: mine; later: 0)
-  move $a2, $s3                # Pass the first-throw flag to the checker
   
   jal check_vertical_matches   # find triggers → flood_mark paints them GRAY in game_grid
   beqz $v0, throw_cascade_done # If nothing cleared, we're done
-  
-  li $s3, 0                    # Any subsequent checks are gravity cascades
+
 
   # flash the highlighted bubbles
   jal draw_grid                # repaint grid (shows COLOR_LIGHT_GRAY cells)
@@ -867,7 +872,7 @@ throw_cascade_done:
   jal check_overflow
 
 throw_done: 
-  POP_RA()
+  restore_ra()
 
 # ----------------------------------------------------------- MATCHING LOGIC
 #Target column and colour = where could a NEW match possibly be? 
@@ -878,14 +883,12 @@ throw_done:
 
 # $a0 = target column (0-6), or -1 for all columns
 # $a1 = target color (0 for any color)
-# $a2 = is_first_throw (1 = yes, 0 = no, only check gravity flags)
 check_vertical_matches:
-  PUSH_RA()
+  save_ra()
   li $s4, 0                  # $s4 = found flag (0 = none, 1 = cleared)
   
   move $s0, $a0              # $s0 = target column (-1 means check all columns)
   move $s1, $a1              # $s1 = target color (0 means any colour) 
-  move $s5, $a2              # $s5 = is_first_throw
   
   li $t1, 0                  # row
 
@@ -931,17 +934,15 @@ cvm_trigger:
   move $a1, $t2               #current col 
 
   # Save loop registers (row, col, found) 
-  addi $sp, $sp, -12
+  addi $sp, $sp, -8
   sw   $t1, 0($sp)
   sw   $t2, 4($sp)
-  sw   $s4, 8($sp)
 
   jal flood_mark             # highlights and doesn't clear
 
   lw   $t1, 0($sp)      #get row, col and found back 
   lw   $t2, 4($sp)
-  lw   $s4, 8($sp)
-  addi $sp, $sp, 12
+  addi $sp, $sp, 8
   j cvm_next_col
 
 cvm_check_flags:
@@ -975,35 +976,32 @@ cvm_next_row:
 
 cvm_done:
   move $v0, $s4 # return found (0 or 1) 
-  POP_RA()
+  restore_ra()
   
 flood_mark:
-  PUSH_RA() #recursion, save MY current address 
   
-  # Save $a0, $a1, $s2, $s4 so they aren't destroyed by recursion
-  addi $sp, $sp, -16
-  sw $a0, 0($sp)  #MY row
-  sw $a1, 4($sp)  #MY col (saved row and col so when we recurse on neighbours, we know who the neighbours are)
-  sw $s2, 8($sp)  #the target colour (what was matched, so the subcalls know what to check against)
-  sw $s4, 12($sp) #(a counter the caller uses) 
+  # Save $a0, $a1 so they aren't destroyed by recursion
+  addi $sp, $sp, -12
+  sw $ra, 8($sp)  #ra saved here
+  sw $a0, 0($sp)  #row
+  sw $a1, 4($sp)  #col (saved row and col so when we recurse on neighbours, we know who the neighbours are)
+  # Recall $s2 = target color, $s4 = caller's found flag
   
-  # BASE CASE 1: Bounds check (off the board)  -------------------------------------
-  bltz $a0, ff_done #row < 0
-  bge $a0, 20, ff_done #row >= 20 (ACCOUNTS FOR OVERFLOW)
-      # game_grid: visible board is 7 cols × 14 rows (rows 0–13).
-      # Rows 14–19 are spare: a full-hand throw (MAX_HOLD = 6) can land up to 6 rows
-      # past the board before matching / check_overflow runs.
+  # Check bounds (off the board)
+  bltz $a0, ff_done 
+  bge $a0, 20, ff_done # 20 rows to account for overflow
+
   bltz $a1, ff_done #col < 0
   bge $a1, 7, ff_done #col >= 7 
   
-  # BASE CASE 2: Check cell (not the target colour?) -------------------------------------
+  # Check cell (not the target colour?)
   la $t0, game_grid
   CELL_ADDR($t1, $a0, $a1, $t0)
   lw $t2, 0($t1)
   
   bne $t2, $s2, ff_done      # If not matching color, stop
 
-  # BASE CASE 3:  Already marked? stop (prevents infinite recursion)  -------------------------------------
+  # Check if already marked (prevents infinite recursion) 
   mul $t3, $a0, 7
   add $t3, $t3, $a1         # index = row x 7 + col
   la  $t4, PENDING_GRID     
@@ -1046,12 +1044,9 @@ flood_mark:
   jal flood_mark
 
 ff_done:
-  # Restore $s2 and $s4, fufilling contract (s2 is target colour, s4 is match checker's counter ) 
-  lw $s2, 8($sp) 
-  lw $s4, 12($sp)
-  addi $sp, $sp, 16
-  
-  POP_RA()
+  lw $ra, 8($sp)
+  addi $sp, $sp, 12  
+  jr $ra
 
 # Clear every grid cell that flood_mark flagged as pending, and reset the flags.
 # Grid becomes black at those cells; caller must redraw and run gravity.
